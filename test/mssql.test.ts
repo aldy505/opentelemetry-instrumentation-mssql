@@ -1,16 +1,13 @@
-import { context, setSpan } from '@opentelemetry/api';
-
-import { NodeTracerProvider } from '@opentelemetry/node';
+import { describe, it, assert, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { context, trace } from '@opentelemetry/api';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
-import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/tracing';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
 import { MssqlInstrumentation } from '../src';
 
-//const logger = new NoopLogger();
 const instrumentation = new MssqlInstrumentation({});
-import * as assert from 'assert';
-import * as Docker from './Docker';
-import * as mssql from 'mssql';
+import mssql from 'mssql';
 
 const config: mssql.config = {
   user: process.env.MSSQL_USER || 'sa',
@@ -24,8 +21,9 @@ const config: mssql.config = {
   }
 };
 
-describe('mssql@6.x', () => {
+const connectionString = `Server=${config.server};Database=${config.database};User Id=${config.user};Password=${config.password};Encrypt=${config.options?.encrypt ?? false}`;
 
+describe.sequential('mssql@10.x', () => {
   const testMssql = process.env.RUN_MSSQL_TESTS || true; // For CI: assumes local mysql db is already available
   const testMssqlLocally = process.env.RUN_MSSQL_TESTS_LOCAL; // For local: spins up local mysql db via docker
   const shouldTest = testMssql || testMssqlLocally; // Skips these tests if false (default)
@@ -36,38 +34,21 @@ describe('mssql@6.x', () => {
   const memoryExporter = new InMemorySpanExporter();
   let pool: mssql.ConnectionPool;
 
-  before(function (done) {
-      if (!shouldTest) {
-        // this.skip() workaround
-        // https://github.com/mochajs/mocha/issues/2683#issuecomment-375629901
-        this.test!.parent!.pending = true;
-        console.log('Skipping tests...');
-        this.skip();
-      }
+  beforeAll(() => {
       instrumentation.setTracerProvider(provider);
       provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
       if (testMssqlLocally) {
         console.log('Starting mssql...');
-        Docker.start('mssql');
-        // wait 15 seconds for docker container to start
-        this.timeout(20000);
-        setTimeout(done, 15000);
-      } else {
-        done();
       }
   });
 
-  after(function () {
-
+  afterAll(function () {
     if (testMssqlLocally) {
-      this.timeout(5000);
       console.log('Stopping mssql...');
-      Docker.cleanUp('mssql');
     }
   });
 
   beforeEach(async () => {
-
       contextManager = new AsyncHooksContextManager();
       context.setGlobalContextManager(contextManager.enable());
       instrumentation.enable();
@@ -82,20 +63,18 @@ describe('mssql@6.x', () => {
       });
       await pool.connect()
       pool.on('error', err => {
-        console.log(" err " + err);
+        console.error(err);
       });
       
     });
   
-    afterEach(done => {
+    afterEach(async () => {
       memoryExporter.reset();
       contextManager.disable();
       instrumentation.disable();
 
       // end pool
-      pool.close().finally(() => {
-        done();
-      });        
+      await pool.close();
     });
 
     it('should export a plugin', () => {
@@ -107,79 +86,56 @@ describe('mssql@6.x', () => {
     });
     
     describe('when the query is a string', () => {
-      it('should name the span accordingly ', done => {
-
-        pool.connect().then((result) => {
-
-          const span = provider.getTracer('default').startSpan('test span');
-          context.with(setSpan(context.active(), span), () => {
-            const request = new mssql.Request(pool);
-            request.query('SELECT 1 as number').then((result) => {
-              //console.log(result);
-            }).catch(error =>{
-              //console.log("child erro " + error);
-            }).finally(() => {
-              const spans = memoryExporter.getFinishedSpans();
-              assert.strictEqual(spans[0].name, 'SELECT');
-              done();
-            });
-
+      it('should name the span accordingly', async () => {
+        const span = provider.getTracer('default').startSpan('test span');
+        context.with(trace.setSpan(context.active(), span), () => {
+          const request = new mssql.Request(pool);
+          request.query('SELECT 1 as number').finally(() => {
+            span.end();
+            const spans = memoryExporter.getFinishedSpans();
+            console.log(spans)
+            assert.strictEqual(spans[0].name, 'SELECT');
           });
-        })
-
+        });
       });
     });
 
     describe('when connectionString is provided', () => {
-      it('should name the span accordingly ', done => {
-        
-        try {
-          const pool = new mssql.ConnectionPool(`mssql://${config.user}:${config.password}@${config.server}/${config.database}`)
-          //pool.query`select * from mytable where id = ${value}`;
-          pool.connect().then(async () => {
-            const request = new mssql.Request(pool);
-            request.query(`SELECT 1 as number`).then((result) => {
-              const spans = memoryExporter.getFinishedSpans();
-              assert.strictEqual(spans[0].name, 'SELECT');
-            }).catch(error =>{
-              //console.log("child erro " + error);
-            }).finally(() => {
-              pool.close();
-              done();
-            });
-          })
-        } catch (err) {
-          console.error(err);
-        }
+      it('should name the span accordingly ', async () => {
+          const pool = new mssql.ConnectionPool(connectionString)
+          await pool.connect();
+          const request = new mssql.Request(pool);
+          request.query(`SELECT 1 as number`).then((result) => {
+            const spans = memoryExporter.getFinishedSpans();
+            assert.strictEqual(spans[0].name, 'SELECT');
+          });
+          
+          await pool.close();
       });
     });
 
     describe('when connectionString is provided for query on pool', () => {
       it('should name the span accordingly, query on pool', async () => {          
-
-          const pool = new mssql.ConnectionPool(`mssql://${config.user}:${config.password}@${config.server}/${config.database}`)
+          const pool = new mssql.ConnectionPool(connectionString)
           
           await pool.connect();
           await pool.query`SELECT 1 as number`;
           const spans = memoryExporter.getFinishedSpans();
+          console.log(spans)
           assert.strictEqual(spans[0].name, 'SELECT');
-          pool.close();
+          await pool.close();
       });
     });
 
     describe('when connectionString is provided for query on pool', () => {
-      it('should name the span accordingly, query on pool.request', done => {          
-
-          const pool = new mssql.ConnectionPool(`mssql://${config.user}:${config.password}@${config.server}/${config.database}`)
-
+      it('should name the span accordingly, query on pool.request', async () => {          
+          const pool = new mssql.ConnectionPool(connectionString)
+          await pool.connect();
           pool.request().query(`SELECT 1 as number`).then((result) => {
             const spans = memoryExporter.getFinishedSpans();
             assert.strictEqual(spans[0].name, 'SELECT');
-          }).catch(error =>{
-            //console.log("child erro " + error);
-          }).finally(() => {
-            done();
-          });          
+          });
+          await pool.close();
       });
     });
 

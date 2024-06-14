@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 
-import { SpanAttributes } from '@opentelemetry/api';
+import { Attributes } from '@opentelemetry/api';
 import {
-  DatabaseAttribute,
-  GeneralAttribute,
+  SEMATTRS_DB_NAME,
+  SEMATTRS_DB_USER,
+  SEMATTRS_NET_PEER_IP,
+  SEMATTRS_NET_PEER_NAME,
+  SEMATTRS_NET_PEER_PORT,
 } from '@opentelemetry/semantic-conventions';
 import type {
   config,
@@ -30,15 +33,15 @@ import type {
  */
 export function getConnectionAttributes(
   config: config
-): SpanAttributes {
+): Attributes {
   const { server, port, database, user } = getConfig(config);
 
   return {
-    [GeneralAttribute.NET_PEER_HOSTNAME]: server,
-    [GeneralAttribute.NET_PEER_PORT]: port,
-    [GeneralAttribute.NET_PEER_ADDRESS]: getJDBCString(server, port, database),
-    [DatabaseAttribute.DB_NAME]: database,
-    [DatabaseAttribute.DB_USER]: user,
+    [SEMATTRS_NET_PEER_NAME]: server,
+    [SEMATTRS_NET_PEER_PORT]: port,
+    [SEMATTRS_NET_PEER_IP]: getJDBCString(server, port, database),
+    [SEMATTRS_DB_NAME]: database,
+    [SEMATTRS_DB_USER]: user,
   };
 }
 

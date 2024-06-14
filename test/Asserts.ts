@@ -1,12 +1,12 @@
 import {
     SpanKind,
-    SpanAttributes,
+    Attributes,
     Span,
     SpanStatus,
-    TimedEvent,
 } from '@opentelemetry/api';
+import { TimedEvent } from '@opentelemetry/sdk-trace-base';
 import * as assert from 'assert';
-import { ReadableSpan } from '@opentelemetry/tracing';
+import { ReadableSpan } from '@opentelemetry/sdk-trace-node';
 import {
     hrTimeToMilliseconds,
     hrTimeToMicroseconds,
@@ -15,12 +15,12 @@ import {
 export const assertSpan = (
     span: ReadableSpan,
     kind: SpanKind,
-    attributes: SpanAttributes,
+    attributes: Attributes,
     events: TimedEvent[],
     status: SpanStatus
 ) => {
-    assert.strictEqual(span.spanContext.traceId.length, 32);
-    assert.strictEqual(span.spanContext.spanId.length, 16);
+    assert.strictEqual(span.spanContext().traceId.length, 32);
+    assert.strictEqual(span.spanContext().spanId.length, 16);
     assert.strictEqual(span.kind, kind);
 
     assert.ok(span.endTime);
@@ -49,12 +49,12 @@ export const assertPropagation = (
     parentSpan: Span
 ) => {
     const targetSpanContext = childSpan.spanContext;
-    const sourceSpanContext = parentSpan.context();
-    assert.strictEqual(targetSpanContext.traceId, sourceSpanContext.traceId);
+    const sourceSpanContext = parentSpan.spanContext();
+    assert.strictEqual(targetSpanContext().traceId, sourceSpanContext.traceId);
     assert.strictEqual(childSpan.parentSpanId, sourceSpanContext.spanId);
     assert.strictEqual(
-        targetSpanContext.traceFlags,
+        targetSpanContext().traceFlags,
         sourceSpanContext.traceFlags
     );
-    assert.notStrictEqual(targetSpanContext.spanId, sourceSpanContext.spanId);
+    assert.notStrictEqual(targetSpanContext().spanId, sourceSpanContext.spanId);
 };
